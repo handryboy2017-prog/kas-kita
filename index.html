@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1d3557">
+<title>Kas Kita</title>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1 class="brand">Kas Kita</h1>
+    <div class="me">
+      <span id="me-lbl">Saya</span>
+      <div class="seg" role="group" aria-labelledby="me-lbl">
+        <button type="button" data-act="role" data-role="suami" aria-pressed="false">Suami</button>
+        <button type="button" data-act="role" data-role="istri" aria-pressed="false">Istri</button>
+      </div>
+    </div>
+  </header>
+
+  <nav class="seg tabs" aria-label="Bagian aplikasi">
+    <button type="button" data-act="tab" data-tab="home" aria-pressed="true">Ringkasan</button>
+    <button type="button" data-act="tab" data-tab="budget" aria-pressed="false">Anggaran</button>
+    <button type="button" data-act="tab" data-tab="rec" aria-pressed="false">Berulang</button>
+    <button type="button" data-act="tab" data-tab="more" aria-pressed="false">Lainnya</button>
+  </nav>
+
+  <div class="month" id="monthbar">
+    <button class="icon-btn" type="button" id="prev" data-act="prev" aria-label="Bulan sebelumnya">&#8249;</button>
+    <h2 id="month" aria-live="polite"></h2>
+    <button class="icon-btn" type="button" id="next" data-act="next" aria-label="Bulan berikutnya">&#8250;</button>
+  </div>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <section class="panelbody" id="p-home">
+    <section class="balance" id="summary" aria-label="Ringkasan bulan ini"></section>
+    <div id="alerts"></div>
+    <div class="actions">
+      <button type="button" class="act out" id="add-out" data-act="add-out" disabled>+ Pengeluaran</button>
+      <button type="button" class="act in" id="add-in" data-act="add-in" disabled>+ Pemasukan</button>
+    </div>
+    <section class="card" aria-labelledby="chart-h">
+      <h3 class="sec" id="chart-h">Pengeluaran per kategori</h3>
+      <div id="chart"></div>
+    </section>
+    <section class="list-head" aria-labelledby="list-h">
+      <h3 class="sec" id="list-h">Riwayat transaksi</h3>
+      <input class="search" id="q" type="search" placeholder="Cari catatan atau kategori" autocomplete="off" aria-label="Cari transaksi">
+      <div class="filters" role="group" aria-label="Filter">
+        <button class="chip" type="button" data-act="ftype" data-v="all" aria-pressed="true">Semua</button>
+        <button class="chip" type="button" data-act="ftype" data-v="out" aria-pressed="false">Keluar</button>
+        <button class="chip" type="button" data-act="ftype" data-v="in" aria-pressed="false">Masuk</button>
+        <button class="chip" type="button" data-act="fwho" data-v="all" aria-pressed="true">Berdua</button>
+        <button class="chip" type="button" data-act="fwho" data-v="suami" aria-pressed="false">Suami</button>
+        <button class="chip" type="button" data-act="fwho" data-v="istri" aria-pressed="false">Istri</button>
+      </div>
+      <div id="list"></div>
+    </section>
+  </section>
+
+  <section class="panelbody" id="p-budget" hidden></section>
+  <section class="panelbody" id="p-rec" hidden></section>
+  <section class="panelbody" id="p-more" hidden></section>
+</div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="scrim" data-act="close"></div>
+  <form class="panel" id="form" role="dialog" aria-modal="true" aria-labelledby="sheet-title" novalidate>
+    <div class="panel-head">
+      <h2 id="sheet-title">Catat pengeluaran</h2>
+      <button type="button" class="icon-btn" data-act="close" aria-label="Tutup">&#215;</button>
+    </div>
+    <div class="seg type" role="group" aria-label="Jenis catatan">
+      <button type="button" data-act="settype" data-type="out" aria-pressed="true">Pengeluaran</button>
+      <button type="button" data-act="settype" data-type="in" aria-pressed="false">Pemasukan</button>
+    </div>
+    <label class="amount" for="amt"><span>Rp</span><input id="amt" data-money inputmode="numeric" autocomplete="off" placeholder="0" aria-label="Nominal dalam rupiah"></label>
+    <div class="cats" id="cats" role="radiogroup" aria-label="Kategori"></div>
+    <div class="newcat" id="newcat" hidden>
+      <input class="field" id="ncname" type="text" maxlength="24" placeholder="Nama kategori baru" autocomplete="off" aria-label="Nama kategori baru">
+      <button type="button" class="add-btn" data-act="nc-add">Tambah</button>
+    </div>
+    <div class="fields">
+      <input class="field" id="note" type="text" maxlength="120" placeholder="Catatan (opsional)" autocomplete="off" aria-label="Catatan">
+      <input class="field" id="date" type="date" aria-label="Tanggal">
+      <select class="field" id="day" aria-label="Tanggal berulang tiap bulan" hidden></select>
+    </div>
+    <p class="hint" id="rec-hint" hidden>Dicatat otomatis saat Kas Kita dibuka pada atau setelah tanggal itu. Untuk tanggal 29 sampai 31, bulan yang lebih pendek memakai tanggal terakhirnya.</p>
+    <div id="receipt-wrap">
+      <div class="receipt" id="receipt"></div>
+      <input class="vh" id="rfile" type="file" accept="image/*" aria-label="Pilih foto struk">
+    </div>
+    <div class="who-pick">
+      <span id="who-lbl">Dicatat oleh</span>
+      <div class="seg" role="group" aria-labelledby="who-lbl">
+        <button type="button" data-act="setwho" data-v="suami" aria-pressed="false">Suami</button>
+        <button type="button" data-act="setwho" data-v="istri" aria-pressed="false">Istri</button>
+      </div>
+    </div>
+    <p class="err" id="err" role="alert"></p>
+    <div class="panel-actions">
+      <button type="button" class="del" id="del" data-act="del" hidden>Hapus</button>
+      <button type="submit" class="save" id="save">Simpan</button>
+    </div>
+  </form>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script type="module" src="/main.js"></script>
+</body>
+</html>

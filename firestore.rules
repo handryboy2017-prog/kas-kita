@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Data tiap rumah tangga ada di households/{kode-rumah-tangga}/...
+    // Hanya yang sudah masuk (anonim) dan tahu kode rumah tangga yang bisa membaca atau menulis.
+    // Daftar seluruh rumah tangga tidak bisa dibuka karena tidak ada aturan untuk koleksi induknya.
+    match /households/{hid}/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

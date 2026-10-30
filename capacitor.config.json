@@ -1,0 +1,12 @@
+{
+  "appId": "id.kaskita.app",
+  "appName": "Kas Kita",
+  "webDir": "dist",
+  "android": { "allowMixedContent": false },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "native",
+      "initialViewportFitValueHint": "cover"
+    }
+  }
+}
