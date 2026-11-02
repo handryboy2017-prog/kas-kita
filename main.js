@@ -6,8 +6,9 @@ import { App as CapApp } from '@capacitor/app';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import * as XLSX from 'xlsx';
-import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { initializeApp } from 'firebase/app';
+import FIREBASE_CONFIG_TEXT from './firebase-config.js';
+import { getAuth, signInWithEmailAndPassword, signOut, sendPasswordResetEmail, onAuthStateChanged } from 'firebase/auth';
 import {
   getFirestore, initializeFirestore, persistentLocalCache, persistentSingleTabManager,
   collection, doc as fsDoc, setDoc, deleteDoc, getDoc, getDocs, query, where, orderBy, limit, onSnapshot
@@ -124,7 +125,7 @@ import {
     uid: null, role: null, dl: null,
     fType: 'all', fWho: 'all', q: '',
     custom: [], budgets: {}, recs: [], editBudget: null, armed: null,
-    syncMode: 'new', syncMsg: '', syncBusy: false, exPeriod: 'month', exBusy: false, exMsg: '', ncType: 'out', ncMsg: '',
+    user: null, exPeriod: 'month', exBusy: false, exMsg: '', ncType: 'out', ncMsg: '',
     editing: null, sMode: 'tx', sType: 'out', sCat: null, sWho: null,
     sReceipt: null, sReceiptChanged: false, sReceiptBusy: false, sZoom: false, newCat: false
   };
@@ -194,6 +195,8 @@ import {
   function render() {
     var label = new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(new Date(S.y, S.m - 1, 1));
     $('#month').textContent = label;
+    $('#login').hidden = S.mode !== 'login';
+    document.querySelector('.wrap').hidden = S.mode === 'login';
     $('#next').disabled = isCurrentMonth();
     $('#monthbar').hidden = !(S.tab === 'home' || S.tab === 'budget');
     ['home', 'budget', 'rec', 'more'].forEach(function (t) { $('#p-' + t).hidden = S.tab !== t; });
@@ -203,7 +206,7 @@ import {
     var banner = $('#banner'), msg = '';
     if (S.error) msg = '<strong>Data belum bisa dimuat.</strong> Periksa koneksi, lalu buka ulang halaman ini.';
     else if (S.readOnly) msg = '<strong>Hanya bisa melihat.</strong>';
-    else if (S.mode === 'local') msg = '<strong>Mode perangkat: catatan hanya tersimpan di HP ini.</strong> Hubungkan Firebase agar Anda dan pasangan melihat catatan yang sama.<br><button type="button" class="chip" data-act="go-sync" style="margin-top:8px">Atur sinkron</button>';
+    else if (S.mode === 'local') msg = '<strong>Mode perangkat: belum tersambung ke Firebase.</strong> Catatan hanya tersimpan di HP ini.';
     banner.hidden = !msg; banner.innerHTML = msg;
 
     if (S.tab === 'home') renderHome(label);
@@ -703,6 +706,8 @@ import {
       if (!v) { er.textContent = 'Isi batas bulanan, atau pilih Hapus.'; return; }
       Promise.resolve(store.set('budgets', id, { amount: v })).then(function () { S.editBudget = null; render(); toast('Anggaran tersimpan'); },
         function (ex) { er.textContent = writeFailed(ex); });
+    } else if (f.id === 'loginform') {
+      doLogin();
     } else if (f.id === 'ncform') {
       addCategory(S.ncType, $('#ncname2').value).then(function () { S.ncMsg = ''; render(); toast('Kategori ditambahkan'); },
         function (ex) { S.ncMsg = catMsg(ex); render(); });
@@ -767,122 +772,69 @@ import {
     else if (a === 'ex-xlsx') doExport('xlsx');
     else if (a === 'ex-csv') doExport('csv');
     else if (a === 'ex-copy') doExport('copy');
-    else if (a === 'go-sync') { S.tab = 'more'; render(); window.scrollTo(0, 0); }
-    else if (a === 'sync-mode') { S.syncMode = el.dataset.v; S.syncMsg = ''; render(); }
-    else if (a === 'sync-copy') { copyInvite(); }
-    else if (a === 'sync-off') { if (S.armed !== 'sync:off') { arm('sync:off'); return; } S.armed = null; try { localStorage.removeItem(CONN_KEY); } catch (x) { /* abaikan */ } location.reload(); }
-    else if (a === 'sync-new') { syncNew(); }
-    else if (a === 'sync-join') { syncJoin(); }
+    else if (a === 'logout') { if (fbAuth) signOut(fbAuth); }
+    else if (a === 'reset-pw') doReset();
   });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
 
-  /* ---------- mulai ---------- */
-  buildDays();
-  render();
-  /* ---------- sinkron Firebase ---------- */
-  var CONN_KEY = 'kk-conn', conn = null, fbDb = null, probeApp = null;
-  var readConn = function () { try { var c = JSON.parse(localStorage.getItem(CONN_KEY) || 'null'); return c && c.c && c.h ? c : null; } catch (e) { return null; } };
-  var inviteCode = function () { return conn ? 'KK1.' + btoa(unescape(encodeURIComponent(JSON.stringify(conn)))) : ''; };
-  function parseInvite(t) {
-    t = String(t || '').replace(/\s+/g, '');
-    if (t.indexOf('KK1.') !== 0) return null;
-    try { var o = JSON.parse(decodeURIComponent(escape(atob(t.slice(4))))); return o && o.c && o.c.apiKey && o.h ? o : null; } catch (e) { return null; }
-  }
+  /* ---------- masuk dengan email ---------- */
+  var HID = 'rumah', fbAuth = null, fbDb = null;
   function parseConfig(t) {
     var o = {};
     String(t || '').replace(/["']?(apiKey|authDomain|projectId|storageBucket|messagingSenderId|appId|measurementId)["']?\s*:\s*["']([^"']+)["']/g, function (m, k, v) { o[k] = v; return m; });
     return o.apiKey && o.projectId && o.appId ? o : null;
   }
-  function newHid() { var a = new Uint8Array(18); crypto.getRandomValues(a); return Array.prototype.map.call(a, function (b) { return (b % 36).toString(36); }).join(''); }
-  function withTimeout(p, ms) {
-    return new Promise(function (res, rej) {
-      var t = setTimeout(function () { rej({ code: 'timeout' }); }, ms);
-      p.then(function (v) { clearTimeout(t); res(v); }, function (e) { clearTimeout(t); rej(e); });
-    });
-  }
-  function syncError(e) {
+  function loginError(e) {
     var c = (e && e.code) || '';
-    if (c === 'auth/operation-not-allowed' || c === 'auth/admin-restricted-operation') return 'Aktifkan metode masuk Anonymous di Firebase: Authentication, Sign-in method, Anonymous.';
-    if (c.indexOf('invalid-api-key') > -1 || c.indexOf('api-key-not-valid') > -1) return 'Konfigurasi Firebase salah. Salin ulang firebaseConfig dari Project settings.';
-    if (c === 'auth/network-request-failed' || c === 'timeout' || c === 'unavailable') return 'Tidak bisa terhubung ke Firebase. Periksa internet lalu coba lagi.';
-    if (c === 'permission-denied') return 'Aturan Firestore belum dipasang. Tempel isi firestore.rules di Firestore Database, tab Rules, lalu Publish.';
-    if (c === 'bad-code') return 'Kode undangan tidak valid. Salin ulang seluruh kodenya.';
-    if (c === 'bad-config') return 'Konfigurasi tidak terbaca. Tempel seluruh blok firebaseConfig, termasuk apiKey dan appId.';
-    if (c === 'no-household') return 'Kode itu belum dikenali. Pastikan pasangan sudah menyambungkan dan kodenya lengkap.';
-    if (c === 'failed-precondition' || c === 'not-found') return 'Firestore belum dibuat. Buka Firestore Database di Firebase lalu klik Create database.';
-    return 'Gagal menyambungkan (' + (c || 'tidak diketahui') + ').';
+    if (c === 'auth/invalid-credential' || c === 'auth/wrong-password' || c === 'auth/user-not-found' || c === 'auth/invalid-email' || c === 'auth/missing-password') return 'Email atau kata sandi salah.';
+    if (c === 'auth/too-many-requests') return 'Terlalu banyak percobaan. Tunggu beberapa menit, atau atur ulang kata sandi.';
+    if (c === 'auth/network-request-failed') return 'Tidak ada koneksi internet.';
+    if (c === 'auth/operation-not-allowed') return 'Metode Email/Password belum diaktifkan di Firebase.';
+    if (c === 'auth/user-disabled') return 'Akun ini dinonaktifkan di Firebase.';
+    return 'Gagal masuk (' + (c || 'tidak diketahui') + ').';
   }
-  function probe(cfg, hid, create) {
-    var cleanup = probeApp ? deleteApp(probeApp).catch(function () {}) : Promise.resolve();
-    probeApp = null;
-    return cleanup.then(function () {
-      probeApp = initializeApp(cfg);
-      var ref = fsDoc(getFirestore(probeApp), 'households', hid, 'meta', 'info');
-      return withTimeout(signInAnonymously(getAuth(probeApp)), 15000).then(function () {
-        if (create) return withTimeout(setDoc(ref, { createdAt: Date.now() }), 15000);
-        return withTimeout(getDoc(ref), 15000).then(function (s) { if (!s.exists()) throw { code: 'no-household' }; });
-      });
-    });
+  function doLogin() {
+    var em = $('#lemail').value.trim(), pw = $('#lpass').value, er = $('#lerr'), bt = $('#lbtn');
+    if (!em || !pw) { er.textContent = 'Isi email dan kata sandi.'; return; }
+    bt.disabled = true; er.textContent = '';
+    signInWithEmailAndPassword(fbAuth, em, pw).then(function () { bt.disabled = false; $('#lpass').value = ''; },
+      function (e) { bt.disabled = false; er.textContent = loginError(e); });
   }
-  function finishConnect(c, migrate) {
-    try { localStorage.setItem(CONN_KEY, JSON.stringify(c)); if (migrate) localStorage.setItem('kk-migrate', '1'); } catch (e) { S.syncBusy = false; S.syncMsg = 'Penyimpanan HP penuh atau diblokir.'; render(); return; }
-    location.reload();
-  }
-  function syncFail(e) { S.syncBusy = false; S.syncMsg = syncError(e); render(); }
-  function syncNew() {
-    var cfg = parseConfig(($('#synnew') || {}).value);
-    if (!cfg) return syncFail({ code: 'bad-config' });
-    var hid = newHid(); S.syncBusy = true; S.syncMsg = ''; render();
-    probe(cfg, hid, true).then(function () { finishConnect({ c: cfg, h: hid }, true); }, syncFail);
-  }
-  function syncJoin() {
-    var inv = parseInvite(($('#synjoin') || {}).value);
-    if (!inv) return syncFail({ code: 'bad-code' });
-    S.syncBusy = true; S.syncMsg = ''; render();
-    probe(inv.c, inv.h, false).then(function () { finishConnect(inv, false); }, syncFail);
-  }
-  function copyInvite() {
-    var code = inviteCode();
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(code).then(function () { toast('Kode undangan tersalin'); }, function () { var t = $('#invcode'); if (t) { t.select(); } toast('Tekan lama lalu salin kodenya'); });
-    } else { var t = $('#invcode'); if (t) { t.select(); } toast('Tekan lama lalu salin kodenya'); }
+  function doReset() {
+    var em = $('#lemail').value.trim(), er = $('#lerr');
+    if (!em) { er.textContent = 'Tulis email Anda dulu, lalu ketuk Lupa kata sandi.'; return; }
+    sendPasswordResetEmail(fbAuth, em).then(function () { er.textContent = 'Tautan atur ulang kata sandi sudah dikirim. Periksa email Anda.'; },
+      function (e) { er.textContent = loginError(e); });
   }
   function syncCardHtml() {
-    var dis = S.syncBusy ? ' disabled' : '', h = '<section class="card"><h3 class="sec">Sinkron dengan pasangan</h3>';
+    var h = '<section class="card"><h3 class="sec">Akun dan sinkron</h3>';
     if (S.mode === 'shared') {
-      var on = S.armed === 'sync:off';
-      h += '<p class="hint"><span class="pill ok">Tersambung</span> Catatan tersinkron lewat Firebase dan tetap bisa dicatat saat tidak ada internet.</p>' +
-        '<p class="hint">Kirim kode undangan ini ke pasangan. Di HP-nya buka Lainnya, pilih Gabung, lalu tempel kodenya.</p>' +
-        '<textarea class="field code" id="invcode" readonly rows="3" aria-label="Kode undangan">' + esc(inviteCode()) + '</textarea>' +
-        '<div class="row-actions"><button type="button" class="chip" data-act="sync-copy">Salin kode</button>' +
-        '<button type="button" class="chip danger' + (on ? ' armed' : '') + '" data-act="sync-off">' + (on ? 'Yakin putuskan?' : 'Putuskan di HP ini') + '</button></div>';
+      h += '<p class="hint"><span class="pill ok">Tersambung</span> Masuk sebagai <strong>' + esc((S.user && S.user.email) || '') + '</strong>. Catatan tersinkron ke HP pasangan dan tetap bisa dicatat saat tidak ada internet.</p>' +
+        '<div class="row-actions"><button type="button" class="chip" data-act="logout">Keluar</button></div>';
     } else {
-      h += '<p class="hint">Saat ini catatan hanya ada di HP ini. Hubungkan Firebase supaya Anda dan pasangan melihat catatan yang sama.</p>' +
-        '<div class="seg" role="group" aria-label="Cara menyambungkan"><button type="button" data-act="sync-mode" data-v="new" aria-pressed="' + (S.syncMode !== 'join') + '">Mulai baru</button><button type="button" data-act="sync-mode" data-v="join" aria-pressed="' + (S.syncMode === 'join') + '">Gabung</button></div>';
-      if (S.syncMode === 'join') {
-        h += '<textarea class="field code" id="synjoin" rows="4" placeholder="Tempel kode undangan dari pasangan" aria-label="Kode undangan"></textarea>' +
-          '<button type="button" class="act plain" data-act="sync-join"' + dis + '>Gabung</button>';
-      } else {
-        h += '<p class="hint">Buat proyek Firebase gratis dulu (langkahnya ada di panduan), lalu tempel blok firebaseConfig dari Project settings di sini. Catatan yang sudah ada di HP ini ikut dipindahkan.</p>' +
-          '<textarea class="field code" id="synnew" rows="6" placeholder="const firebaseConfig = {\n  apiKey: &quot;...&quot;,\n  ...\n};" aria-label="Konfigurasi Firebase"></textarea>' +
-          '<button type="button" class="act plain" data-act="sync-new"' + dis + '>Sambungkan dan buat kode</button>';
-      }
+      h += '<p class="hint">Aplikasi ini belum tersambung ke Firebase, jadi catatan hanya ada di HP ini. Isi file firebase-config.js lalu bangun ulang APK.</p>';
     }
-    return h + '<p class="hint" role="status" style="color:var(--ink)">' + esc(S.syncBusy ? 'Menyambungkan…' : S.syncMsg) + '</p></section>';
+    return h + '</section>';
+  }
+  function stopData() {
+    if (unsubTx) { unsubTx(); unsubTx = null; }
+    auxUnsubs.forEach(function (u) { try { u(); } catch (e) { /* abaikan */ } });
+    auxUnsubs = [];
+    S.txs = []; S.loaded = false; S.custom = []; S.budgets = {}; S.recs = []; rebuildCats();
   }
   function migrateIfNeeded() {
-    var flag = null, D = {};
-    try { flag = localStorage.getItem('kk-migrate'); D = JSON.parse(localStorage.getItem('kk-data2') || '{}'); } catch (e) { /* abaikan */ }
-    if (!flag) return;
+    var D = {};
+    try { if (localStorage.getItem('kk-migrated')) return; D = JSON.parse(localStorage.getItem('kk-data2') || '{}'); } catch (e) { return; }
     var jobs = [];
     ['transactions', 'categories', 'budgets', 'recurring', 'receipts'].forEach(function (n) {
       var m = D[n] || {}; Object.keys(m).forEach(function (id) { jobs.push([n, id, m[id]]); });
     });
+    if (!jobs.length) return;
     var chain = Promise.resolve();
     jobs.forEach(function (j) { chain = chain.then(function () { return store.set(j[0], j[1], j[2]); }); });
     chain.then(function () {
-      try { localStorage.removeItem('kk-migrate'); localStorage.removeItem('kk-data2'); } catch (e) { /* abaikan */ }
-      if (jobs.length) toast(jobs.length + ' catatan lama dipindahkan');
+      try { localStorage.setItem('kk-migrated', '1'); localStorage.removeItem('kk-data2'); } catch (e) { /* abaikan */ }
+      toast(jobs.length + ' catatan lama dipindahkan');
     }, function () { /* coba lagi di pembukaan berikutnya */ });
   }
 
@@ -904,22 +856,25 @@ import {
   /* ---------- mulai ---------- */
   function startData() { subscribeAux(); subscribeTx(); migrateIfNeeded(); }
   function connect() {
-    conn = readConn();
-    if (!conn) { store = localStore(); S.mode = 'local'; subscribeAux(); subscribeTx(); return; }
+    var cfg = parseConfig(FIREBASE_CONFIG_TEXT);
+    if (!cfg) { store = localStore(); S.mode = 'local'; subscribeAux(); subscribeTx(); return; }
     try {
-      var app = initializeApp(conn.c);
+      var app = initializeApp(cfg);
       try { fbDb = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentSingleTabManager({}) }) }); }
       catch (e) { fbDb = getFirestore(app); }
-      var auth = getAuth(app), started = false;
-      store = fbStore(fbDb, conn.h); S.mode = 'shared';
-      var begin = function (user) { if (started) return; started = true; S.uid = user ? user.uid : null; startData(); };
-      onAuthStateChanged(auth, function (user) {
-        if (user) begin(user);
-        else signInAnonymously(auth).then(function (c) { begin(c.user); }, function () { S.error = true; S.loaded = true; render(); });
-      });
-    } catch (e) {
-      store = localStore(); S.mode = 'local'; conn = null; subscribeAux(); subscribeTx();
-    }
+      fbAuth = getAuth(app);
+    } catch (e) { store = localStore(); S.mode = 'local'; subscribeAux(); subscribeTx(); return; }
+    store = fbStore(fbDb, HID);
+    S.mode = 'login'; render();
+    var started = false;
+    onAuthStateChanged(fbAuth, function (user) {
+      if (user) {
+        S.user = user; S.uid = user.uid; S.mode = 'shared';
+        if (!started) { started = true; startData(); } else render();
+      } else {
+        S.user = null; S.uid = null; S.mode = 'login'; started = false; stopData(); render();
+      }
+    });
   }
   if (Capacitor.isNativePlatform()) {
     S.dl = nativeDl;

@@ -7,6 +7,17 @@
 <title>Kas Kita</title>
 </head>
 <body>
+<main class="login" id="login" hidden>
+  <form class="login-card" id="loginform" novalidate>
+    <h1 class="brand">Kas Kita</h1>
+    <p class="hint">Masuk dengan email dan kata sandi yang dibuat untuk Anda berdua.</p>
+    <input class="field" id="lemail" type="email" autocomplete="username" inputmode="email" autocapitalize="none" placeholder="Email" aria-label="Email">
+    <input class="field" id="lpass" type="password" autocomplete="current-password" placeholder="Kata sandi" aria-label="Kata sandi">
+    <p class="err" id="lerr" role="alert"></p>
+    <button class="save" type="submit" id="lbtn">Masuk</button>
+    <button class="chip" type="button" data-act="reset-pw">Lupa kata sandi?</button>
+  </form>
+</main>
 <div class="wrap">
   <header class="top">
     <h1 class="brand">Kas Kita</h1>
